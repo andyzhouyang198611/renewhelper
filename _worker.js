@@ -17,9 +17,14 @@
  * added: add manual renew history v2.0.2
  * modified: fix renewDialogVisible logic v2.0.3
  * added: add exchange rate v2.0.4
+ * modified: add cache optimize exchange rate logic v2.0.5
+ * added: add total amount display v2.0.6
+ * added: add filter logic v2.0.7
+ * added: add spending stats v2.0.8
+ * modified: fix spending stats logic v2.0.9
  */
 
-const APP_VERSION = "v2.0.4";
+const APP_VERSION = "v2.0.9";
 //接入免费汇率API
 const EXCHANGE_RATE_API_URL = 'https://api.frankfurter.dev/v1/latest?base=';
 // ==========================================
@@ -1716,6 +1721,7 @@ const HTML = `<!DOCTYPE html>
             font-weight: bold !important;
         }
         .el-table { --el-table-bg-color: var(--bg-panel); --el-table-tr-bg-color: var(--bg-panel); --el-table-header-bg-color: var(--bg-body); --el-table-row-hover-bg-color: var(--bg-body); --el-table-border-color: var(--border); --el-table-text-color: var(--text-main); --el-table-header-text-color: var(--text-dim); }
+        .el-table .cell { padding-left: 8px !important; padding-right: 8px !important; }
         html.dark .lunar-popper .el-year-table td .cell, html.dark .lunar-popper .el-month-table td .cell { color: #cbd5e1; }
 
         .notify-item-row { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
@@ -1796,11 +1802,43 @@ const HTML = `<!DOCTYPE html>
                     </div>
                 </div>
                 
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                    <div class="mecha-panel p-6 pl-8 border-l-4 !border-l-blue-500"><div class="text-blue-600 text-xs font-bold font-mono mb-2 tracking-widest">{{ t('totalServices') }}</div><div class="text-5xl font-black font-mono text-textMain">{{ list.length }}</div></div>
-                    <div class="mecha-panel p-6 pl-8 border-l-4 !border-l-amber-500"><div class="text-amber-600 text-xs font-bold font-mono mb-2 tracking-widest">{{ t('expiringSoon') }}</div><div class="text-5xl font-black font-mono text-amber-500">{{ expiringCount }}</div></div>
-                    <div class="mecha-panel p-6 pl-8 border-l-4 !border-l-red-500"><div class="text-red-600 text-xs font-bold font-mono mb-2 tracking-widest">{{ t('expiredAlert') }}</div><div class="text-5xl font-black font-mono text-red-500">{{ expiredCount }}</div></div>
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
+                    <div class="mecha-panel p-6 pl-8 border-l-4 !border-l-blue-500">
+                        <div class="text-blue-600 text-xs font-bold font-mono mb-2 tracking-widest">{{ t('totalServices') }}</div>
+                        <div class="flex items-baseline gap-3">
+                            <div class="text-5xl font-black font-mono text-textMain">{{ list.length }}</div>
+                            <div class="text-xs font-bold font-mono text-blue-600/60" v-if="list.length > 0">≈ {{ totalAmount }} {{ settings.defaultCurrency || 'CNY' }}</div>
+                        </div>
+                    </div>
+                    <div class="mecha-panel p-6 pl-8 border-l-4 !border-l-amber-500">
+                        <div class="text-amber-600 text-xs font-bold font-mono mb-2 tracking-widest">{{ t('expiringSoon') }}</div>
+                        <div class="flex items-baseline gap-3">
+                            <div class="text-5xl font-black font-mono text-amber-500 leading-none">{{ expiringCount }}</div>
+                            <div class="text-xs font-bold font-mono text-amber-600/60" v-if="expiringCount > 0">≈ {{ expiringTotal }} {{ settings.defaultCurrency || 'CNY' }}</div>
+                        </div>
+                    </div>
+                    <div class="mecha-panel p-6 pl-8 border-l-4 !border-l-red-500">
+                        <div class="text-red-600 text-xs font-bold font-mono mb-2 tracking-widest">{{ t('expiredAlert') }}</div>
+                        <div class="flex items-baseline gap-3">
+                            <div class="text-5xl font-black font-mono text-red-500 leading-none">{{ expiredCount }}</div>
+                            <div class="text-xs font-bold font-mono text-red-600/60" v-if="expiredCount > 0">≈ {{ expiredTotal }} {{ settings.defaultCurrency || 'CNY' }}</div>
+                        </div>
+                    </div>
+                    <div class="mecha-panel p-6 pl-8 border-l-4 !border-l-purple-500">
+                        <div class="text-purple-600 text-xs font-bold font-mono mb-2 tracking-widest">{{ t('viewSwitch') }}</div>
+                        <div class="mt-3 inline-flex bg-gray-200 dark:bg-slate-800 rounded-lg p-1 border border-gray-300 dark:border-slate-700">
+                            <button @click="currentView = 'project'" :class="['px-4 py-2 rounded text-xs font-mono font-bold transition-all', currentView === 'project' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white']">
+                                {{ t('viewProjects') }}
+                            </button>
+                            <button @click="currentView = 'spending'" :class="['px-4 py-2 rounded text-xs font-mono font-bold transition-all', currentView === 'spending' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white']">
+                                {{ t('viewSpending') }}
+                            </button>
+                        </div>
+                    </div>
                 </div>
+
+                <!-- Project View -->
+                <template v-if="currentView === 'project'">
 
                 <div class="filter-row" v-if="list.length > 0">
                     <div class="search-box"><el-input v-model="searchKeyword" :placeholder="t('searchPlaceholder')" clearable :prefix-icon="Search"></el-input></div>
@@ -1816,7 +1854,7 @@ const HTML = `<!DOCTYPE html>
                     <div class="hud-bar-container"><div class="hud-text" style="margin-right:12px;color:#94a3b8">MATCHED: <span class="text-white text-lg mx-1">{{ filteredList.length }}</span></div><div class="hud-bar" style="animation-delay:0s"></div><div class="hud-bar" style="animation-delay:0.1s"></div><div class="hud-bar" style="animation-delay:0.2s"></div><div class="hud-bar" style="animation-delay:0.3s"></div><div class="hud-bar" style="animation-delay:0.4s"></div></div>
                 </div>
   <div class="mecha-panel p-1 !border-l-0">
-    <el-table :key="tableKey" :data="pagedList" style="width:100%" v-loading="loading" :row-class-name="tableRowClassName" size="large" @sort-change="handleSortChange" @filter-change="handleFilterChange" :default-sort="{prop: 'daysLeft', order: 'ascending'}">       
+    <el-table :key="tableKey" :data="pagedList" style="width:100%" v-loading="loading" :row-class-name="tableRowClassName" size="large" @sort-change="handleSortChange" @filter-change="handleFilterChange" :default-sort="{prop: 'daysLeft', order: 'ascending'}" show-summary :summary-method="getSummaries">       
         <el-table-column :label="t('serviceName')" min-width="230">
             <template #default="scope">
                 <div class="flex items-center gap-4">
@@ -1832,6 +1870,15 @@ const HTML = `<!DOCTYPE html>
         <el-table-column :label="t('tagsCol')" min-width="120">
             <template #default="scope">
                 <div class="tag-container"><span v-for="tag in scope.row.tags" :key="tag" class="tag-compact">{{ tag }}</span></div>
+            </template>
+        </el-table-column>
+
+        <el-table-column :label="t('fixedPrice')" width="100" prop="fixedPrice" sortable="custom">
+            <template #default="scope">
+                <div class="font-mono">
+                    <span class="text-base font-bold text-slate-700 dark:text-slate-200">{{ scope.row.fixedPrice }}</span>
+                    <span class="text-[10px] text-gray-400 font-bold ml-1 align-top">{{ scope.row.currency }}</span>
+                </div>
             </template>
         </el-table-column>
 
@@ -1866,7 +1913,7 @@ const HTML = `<!DOCTYPE html>
             </template>
         </el-table-column>
 
-        <el-table-column :label="t('lastRenew')" width="140" prop="lastRenewDate" sortable="custom" column-key="lastRenewDate" :filters="lastRenewFilters">
+        <el-table-column :label="t('lastRenew')" width="120" prop="lastRenewDate" sortable="custom" column-key="lastRenewDate" :filters="lastRenewFilters">
             <template #default="scope">
                 <div class="font-mono text-textDim text-sm font-bold">{{ scope.row.lastRenewDate ? scope.row.lastRenewDate.replace(/\s+/g, '').replace(/(\d{4}-\d{2}-\d{2}).*/, '$1') : '' }}</div>
                 <div v-if="scope.row.useLunar && scope.row.lastRenewDateLunar" class="text-[10px] text-gray-400 font-mono">({{ scope.row.lastRenewDateLunar }})</div>
@@ -1954,6 +2001,248 @@ const HTML = `<!DOCTYPE html>
                         />
                     </div>
                 </div>
+
+                </template>
+                <!-- End Project View -->
+
+                <!-- Spending View -->
+                <template v-else>
+                    <div class="spending-dashboard animate-fade-in" v-if="spendingStats.hasData">
+                        <!-- Header & Toggle -->
+                        <div class="flex justify-between items-center mb-6">
+                             <div class="text-xs font-bold font-mono tracking-widest text-gray-500 dark:text-gray-400">{{ t('spendingDashboard') }}</div>
+                             <div class="flex bg-gray-200 dark:bg-slate-800 rounded-lg p-1 border border-gray-300 dark:border-slate-700">
+                                 <button @click="spendingMode='bill'" :class="['px-3 py-1 text-xs font-mono rounded transition-all', spendingMode==='bill' ? 'bg-cyan-600 text-white shadow-lg' : 'text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white']">{{ t('billAmount') }}</button>
+                                 <button @click="spendingMode='op'" :class="['px-3 py-1 text-xs font-mono rounded transition-all', spendingMode==='op' ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-500 dark:text-gray-400 hover:text-black dark:hover:text-white']">{{ t('opSpending') }}</button>
+                             </div>
+                        </div>
+
+                        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                             <!-- LEFT PANEL: Monthly Trend Chart -->
+                             <div class="lg:col-span-8 mecha-panel p-6 border-l-4 transition-colors duration-500 animate-slide-in" 
+                                  :class="spendingMode==='bill' ? '!border-l-cyan-500' : '!border-l-purple-500'"
+                                  style="animation-delay: 0.1s">
+                                 
+                                 <div class="flex justify-between items-center mb-6">
+                                     <div class="text-xs font-bold font-mono tracking-widest uppercase transition-colors duration-300"
+                                          :class="spendingMode==='bill' ? 'text-cyan-600' : 'text-purple-600'">
+                                          {{ t('monthlyTrend') }} <span class="opacity-50">({{ spendingMode==='bill' ? '12M' : '12M' }})</span>
+                                     </div>
+                                 </div>
+
+                                 <!-- Chart Container -->
+                                 <div class="relative h-80 pl-12 pr-4 pt-8 select-none">
+                                     <!-- Y-axis labels -->
+                                     <div class="absolute left-0 top-8 bottom-8 flex flex-col justify-between text-[10px] font-mono text-gray-400 pr-2 w-10 text-right">
+                                         <span>{{ Math.max(...spendingStats[spendingMode].trends.map(m => parseFloat(m.val)), 0).toFixed(0) }}</span>
+                                         <span>0</span>
+                                     </div>
+                                     
+                                     <div class="h-full relative chart-container" @mouseleave="hoverIndex = -1">
+                                         <!-- 1. Bars Layer (HTML for perfect aspect ratio) -->
+                                         <div class="absolute inset-0">
+                                             <div v-for="(item, idx) in spendingStats[spendingMode].trends" :key="spendingMode+'-bar-'+idx"
+                                                  class="absolute h-full flex items-end justify-center"
+                                                  :style="{ left: ((idx / 12) * 100) + '%', width: (100/12) + '%' }"
+                                                  @mouseenter="hoverIndex = idx">
+                                                 
+                                                  <div class="w-[70%] rounded-t transition-all duration-300 relative bar-animate"
+                                                      :style="{ 
+                                                          height: item.pct + '%', 
+                                                          opacity: (hoverIndex === -1 || hoverIndex === idx) ? 1 : 0.3,
+                                                          animationDelay: (idx * 0.05) + 's' 
+                                                      }">
+                                                      <!-- Gradient Background -->
+                                                      <div class="absolute inset-0 rounded-t opacity-80"
+                                                           :class="spendingMode==='bill' ? 'bg-gradient-to-t from-cyan-400 to-cyan-600' : 'bg-gradient-to-t from-purple-400 to-purple-600'"></div>
+                                                      <!-- Hover Highlight Line -->
+                                                      <div v-if="hoverIndex === idx" class="absolute top-0 left-0 right-0 h-[2px] bg-white shadow-glow"></div>
+                                                  </div>
+                                             </div>
+                                         </div>
+
+                                         <!-- 2. Line Layer (SVG for path) -->
+                                         <svg :key="spendingMode+'-line'" class="absolute inset-0 w-full h-full pointer-events-none overflow-visible" viewBox="0 0 100 100" preserveAspectRatio="none">
+                                             <polyline 
+                                                 fill="none" 
+                                                 :stroke="spendingMode==='bill' ? '#67e8f9' : '#c4b5fd'"
+                                                 stroke-width="2"
+                                                 stroke-linecap="round"
+                                                 stroke-linejoin="round"
+                                                 vector-effect="non-scaling-stroke"
+                                                 class="draw-line-animate"
+                                                 :points="spendingStats[spendingMode].trends.map((item, idx) => {
+                                                     const x = ((idx + 0.5) / 12) * 100;
+                                                     const y = 100 - item.pct;
+                                                     return x + ',' + y;
+                                                 }).join(' ')"
+                                             />
+                                         </svg>
+
+                                         <!-- 3. Dots Layer (HTML for non-distorted dots) -->
+                                         <div class="absolute inset-0 pointer-events-none">
+                                             <div v-for="(item, idx) in spendingStats[spendingMode].trends" :key="spendingMode+'-dot-'+idx"
+                                                  class="absolute w-3 h-3 rounded-full border-2 transition-transform duration-300 fade-in-animate"
+                                                  :class="[
+                                                      item.isCurrent ? 'bg-white border-amber-500 scale-125 z-10' : (spendingMode==='bill' ? 'bg-cyan-500 border-cyan-200' : 'bg-purple-500 border-purple-200'),
+                                                      hoverIndex === idx ? 'scale-150' : ''
+                                                  ]"
+                                                  :style="{ 
+                                                      left: 'calc(' + ((idx + 0.5) / 12) * 100 + '% - 6px)', 
+                                                      top: 'calc(' + (100 - item.pct) + '% - 6px)',
+                                                      animationDelay: (0.8 + idx * 0.05) + 's' 
+                                                  }">
+                                             </div>
+                                         </div>
+
+                                         <!-- Tooltip -->
+                                         <div v-if="hoverIndex !== -1" 
+                                              class="absolute z-20 pointer-events-none transform -translate-x-1/2 transition-all duration-75"
+                                              :style="{ 
+                                                  left: ((hoverIndex + 0.5) / 12) * 100 + '%', 
+                                                  top: Math.max(0, 100 - spendingStats[spendingMode].trends[hoverIndex].pct - 20) + '%' 
+                                              }">
+                                             <div class="bg-slate-900/95 backdrop-blur border border-slate-600 text-white text-xs rounded p-3 shadow-2xl whitespace-nowrap min-w-[120px]">
+                                                 <div class="font-bold text-[10px] text-slate-400 mb-2 uppercase">{{ spendingStats[spendingMode].trends[hoverIndex].month }}</div>
+                                                 <div class="flex justify-between items-end mb-1">
+                                                     <span class="text-[10px] text-slate-400">{{ t('total') }}</span>
+                                                     <span class="font-mono font-bold text-sm">{{ spendingStats[spendingMode].trends[hoverIndex].total }}</span>
+                                                 </div>
+                                                 <div class="flex justify-between items-center border-t border-slate-700 pt-1 mt-1">
+                                                     <span class="text-[9px] text-slate-500">{{ t('growth') }}</span>
+                                                     <span :class="['font-mono text-[10px] font-bold', parseFloat(spendingStats[spendingMode].trends[hoverIndex].growth) > 0 ? 'text-red-400' : (parseFloat(spendingStats[spendingMode].trends[hoverIndex].growth) < 0 ? 'text-green-400' : 'text-gray-400')]">
+                                                         {{ parseFloat(spendingStats[spendingMode].trends[hoverIndex].growth) > 0 ? '+' : '' }}{{ spendingStats[spendingMode].trends[hoverIndex].growth }}%
+                                                     </span>
+                                                 </div>
+                                             </div>
+                                         </div>
+                                     </div>
+                                 </div>
+                                 
+                                 <!-- X-Axis Labels -->
+                                 <div class="ml-12 mr-4 flex justify-between mt-2">
+                                     <div v-for="(item, idx) in spendingStats[spendingMode].trends" :key="'l-'+item.month" 
+                                          class="flex-1 text-center" @mouseenter="hoverIndex = idx">
+                                         <div :class="['text-[9px] font-mono mt-1 transition-colors', 
+                                             item.isCurrent ? 'text-amber-500 font-bold' : 'text-gray-400',
+                                             hoverIndex === idx ? 'text-blue-500 font-bold' : '']">
+                                             {{ item.month.slice(5) }}
+                                         </div>
+                                     </div>
+                                 </div>
+                             </div>
+
+                             <!-- RIGHT PANEL: Stats -->
+                             <div class="lg:col-span-4 space-y-6">
+                                 <!-- Annual Summary -->
+                                 <div class="mecha-panel p-6 border-t-4 transition-colors duration-500 animate-slide-in" 
+                                      :class="spendingMode==='bill' ? '!border-t-cyan-500' : '!border-t-purple-500'"
+                                      style="animation-delay: 0.2s">
+                                     <div class="flex justify-between items-center mb-6">
+                                         <div class="text-xs font-bold font-mono tracking-widest uppercase">{{ t('annualSummary') }}</div>
+                                         <el-icon class="text-gray-400"><Promotion /></el-icon>
+                                     </div>
+                                     
+                                     <!-- Current Year Big Number -->
+                                     <div class="mb-6">
+                                          <div class="text-[10px] text-gray-400 font-mono mb-1">{{ new Date().getFullYear() }} {{ t('total') }}</div>
+                                          <div class="text-3xl font-bold font-mono tracking-tight" :class="spendingMode==='bill' ? 'text-cyan-500' : 'text-purple-500'">
+                                              {{ spendingStats[spendingMode].annual[2]?.total || '0' }}
+                                          </div>
+                                     </div>
+
+                                     <!-- Annual Bars -->
+                                     <div class="grid grid-cols-3 gap-2 h-32 items-end">
+                                         <div v-for="y in spendingStats[spendingMode].annual" :key="'y-'+y.year" class="flex flex-col items-center gap-2 h-full justify-end group cursor-default">
+                                             <div class="text-[10px] font-mono font-bold opacity-0 group-hover:opacity-100 transition-opacity -mb-4 z-10 bg-slate-800 text-white px-1 rounded">{{ y.total }}</div>
+                                             <div class="w-full rounded-t transition-all duration-500 relative overflow-hidden"
+                                                  :class="spendingMode==='bill' ? 'bg-cyan-500/20 group-hover:bg-cyan-500/40' : 'bg-purple-500/20 group-hover:bg-purple-500/40'"
+                                                  :style="{ height: Math.max(y.pct, 5) + '%' }">
+                                                  <div class="absolute bottom-0 left-0 right-0 top-0 opacity-50"
+                                                       :class="spendingMode==='bill' ? 'bg-cyan-500' : 'bg-purple-500'"
+                                                       :style="{ height: y.pct + '%' }"></div>
+                                             </div>
+                                             <div class="text-xs font-mono text-gray-500 font-bold">{{ y.year }}</div>
+                                         </div>
+                                     </div>
+                                 </div>
+
+                                 <!-- Monthly Breakdown List -->
+                                 <div class="mecha-panel p-0 overflow-hidden animate-slide-in" style="animation-delay: 0.3s">
+                                     <div class="p-4 border-b border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-800/30">
+                                         <div class="text-xs font-bold font-mono tracking-widest uppercase">{{ t('monthlyBreakdown') }}</div>
+                                     </div>
+                                     <div class="h-[280px] overflow-y-auto custom-scrollbar p-2">
+                                         <div v-for="m in spendingStats[spendingMode].trends.slice().reverse()" :key="'mb-'+m.month"
+                                              class="flex items-center justify-between p-3 mb-1 rounded hover:bg-gray-100 dark:hover:bg-slate-700/50 transition-colors group">
+                                              
+                                              <div class="flex items-center gap-3">
+                                                  <div class="w-1.5 h-8 rounded-full transition-colors"
+                                                       :class="[m.isCurrent ? (spendingMode==='bill' ? 'bg-cyan-500' : 'bg-purple-500') : 'bg-gray-200 dark:bg-slate-700', 
+                                                                'group-hover:' + (spendingMode==='bill' ? 'bg-cyan-400' : 'bg-purple-400')]"></div>
+                                                  <div>
+                                                      <div class="text-xs font-bold font-mono">{{ m.month }}</div>
+                                                      <div class="text-[10px] text-gray-400" v-if="m.isCurrent">{{ t('currMonth') }}</div>
+                                                  </div>
+                                              </div>
+
+                                              <div class="text-right">
+                                                  <div class="font-mono font-bold text-sm">{{ m.total }}</div>
+                                                  <div class="text-[10px] font-mono mt-0.5" 
+                                                       v-if="m.val > 0 || m.prevVal > 0"
+                                                       :class="parseFloat(m.growth) > 0 ? 'text-red-500' : (parseFloat(m.growth) < 0 ? 'text-green-500' : 'text-gray-500')">
+                                                      {{ parseFloat(m.growth) > 0 ? '↑' : (parseFloat(m.growth) < 0 ? '↓' : '-') }} {{ Math.abs(m.growth) }}%
+                                                  </div>
+                                              </div>
+                                         </div>
+                                     </div>
+                                 </div>
+                             </div>
+                        </div>
+                    </div>
+                    <div v-else class="mecha-panel p-12 text-center animate-fade-in">
+                        <div class="text-gray-500 dark:text-gray-400 font-mono text-lg">{{ t('noSpendingData') }}</div>
+                    </div>
+
+                    <style>
+                        @keyframes growUp {
+                            from { transform: scaleY(0); }
+                            to { transform: scaleY(1); }
+                        }
+                        @keyframes fadeIn {
+                            from { opacity: 0; }
+                            to { opacity: 1; }
+                        }
+                        @keyframes slideIn {
+                            from { opacity: 0; transform: translateY(10px); }
+                            to { opacity: 1; transform: translateY(0); }
+                        }
+                        @keyframes drawLine {
+                            0% { stroke-dashoffset: 2000; }
+                            100% { stroke-dashoffset: 0; }
+                        }
+                        .bar-animate {
+                            transform-origin: center bottom;
+                            animation: growUp 0.8s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+                        }
+                        .fade-in-animate {
+                            animation: fadeIn 0.5s ease-out backwards;
+                        }
+                        .animate-slide-in {
+                            animation: slideIn 0.5s ease-out backwards;
+                        }
+                        .draw-line-animate {
+                            stroke-dasharray: 2000;
+                            stroke-dashoffset: 2000;
+                            animation: drawLine 1.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+                            animation-delay: 0.3s;
+                        }
+                        .shadow-glow {
+                            box-shadow: 0 0 10px rgba(255,255,255,0.5);
+                        }
+                    </style>
+                </template>
+                <!-- End Spending View -->
 
                 <div class="mt-8 py-6 text-center border-t border-slate-200/60">
                     <p class="text-[10px] text-gray-400 font-mono tracking-[0.2em] uppercase flex justify-center items-center gap-1">
@@ -2525,14 +2814,14 @@ const HTML = `<!DOCTYPE html>
             }
         };
         const messages = {
-            zh: { filter:{expired:'已过期 / 今天', w7:'7天内', w30:'30天内', future:'远期(>30天)', new:'新服务 (<30天)', stable:'稳定 (1个月-1年)', long:'长期 (>1年)', m1:'最近1个月', m6:'半年内', year:'今年内', earlier:'更早以前'}, secPref: '偏好设置',manualRenew: '手动续期',tipToggle: '切换状态',tipRenew: '手动续期',tipEdit: '编辑服务',tipDelete: '删除服务',secNotify: '通知配置',secData: '数据管理',lblIcsTitle: '日历订阅',lblIcsUrl: '订阅地址 (iOS/Google)',btnCopy: '复制',btnResetToken: '重置令牌',loginTitle:'身份验证',passwordPlaceholder:'请输入访问密钥/Authorization Key',unlockBtn:'解锁终端/UNLOCK',check:'立即检查',add:'新增服务',settings:'系统设置',logs:'运行日志',logout:'安全退出',totalServices:'服务总数',expiringSoon:'即将到期',expiredAlert:'已过期 / 警告',serviceName:'服务名称',type:'类型',nextDue:'下次到期',uptime:'已运行',lastRenew:'上次续期',cyclePeriod:'周期',actions:'操作',cycle:'循环订阅',reset:'到期重置',disabled:'已停用',days:'天',daysUnit:'天',typeReset:'到期重置',typeCycle:'循环订阅',lunarCal:'农历',lbOffline:'离线',unit:{day:'天',month:'月',year:'年'},editService:'编辑服务',newService:'新增服务',formName:'名称',namePlaceholder:'例如: Netflix',formType:'模式',createDate:'创建时间',interval:'周期时长',note:'备注信息',status:'状态',active:'启用',disabledText:'禁用',cancel:'取消',save:'保存数据',saveSettings:'保存配置',settingsTitle:'系统设置',setNotify:'通知配置',pushSwitch:'推送总开关',pushUrl:'Webhook 地址',notifyThreshold:'提醒阈值',setAuto:'自动化配置',autoRenewSwitch:'自动续期',autoRenewThreshold:'自动续期阈值',autoDisableThreshold:'自动禁用阈值',daysOverdue:'天后触发',sysLogs:'系统日志',execLogs:'执行记录',clearHistory:'清空历史',noLogs:'无记录',liveLog:'实时终端',btnExport: '导出备份',btnImport: '恢复备份',btnTest: '发送测试',btnRefresh:'刷新日志',
+            zh: { filter:{expired:'已过期 / 今天', w7:'7天内', w30:'30天内', thisMonth:'本月内', nextMonth:'下月内', halfYear:'半年内', oneYear:'1年内', new:'新服务 (<30天)', stable:'稳定 (1个月-1年)', long:'长期 (>1年)', m1:'最近1个月', m6:'半年内', year:'今年内', earlier:'更早以前'}, viewSwitch:'视图切换',viewProjects:'项目列表',viewSpending:'支出分析',annualSummary:'年度汇总',monthlyTrend:'月度趋势',noSpendingData:'暂无支出数据',avgMonthly:'月均',billAmount:'账单金额 (按账单周期)',opSpending:'实际支出 (按操作日期)',secPref: '偏好设置',manualRenew: '手动续期',tipToggle: '切换状态',tipRenew: '手动续期',tipEdit: '编辑服务',tipDelete: '删除服务',secNotify: '通知配置',secData: '数据管理',lblIcsTitle: '日历订阅',lblIcsUrl: '订阅地址 (iOS/Google)',btnCopy: '复制',btnResetToken: '重置令牌',loginTitle:'身份验证',passwordPlaceholder:'请输入访问密钥/Authorization Key',unlockBtn:'解锁终端/UNLOCK',check:'立即检查',add:'新增服务',settings:'系统设置',logs:'运行日志',logout:'安全退出',totalServices:'服务总数',expiringSoon:'即将到期',expiredAlert:'已过期 / 警告',serviceName:'服务名称',type:'类型',nextDue:'下次到期',uptime:'已运行',lastRenew:'上次续期',cyclePeriod:'周期',actions:'操作',cycle:'循环订阅',reset:'到期重置',disabled:'已停用',days:'天',daysUnit:'天',typeReset:'到期重置',typeCycle:'循环订阅',lunarCal:'农历',lbOffline:'离线',unit:{day:'天',month:'月',year:'年'},editService:'编辑服务',newService:'新增服务',formName:'名称',namePlaceholder:'例如: Netflix',formType:'模式',createDate:'创建时间',interval:'周期时长',note:'备注信息',status:'状态',active:'启用',disabledText:'禁用',cancel:'取消',save:'保存数据',saveSettings:'保存配置',settingsTitle:'系统设置',setNotify:'通知配置',pushSwitch:'推送总开关',pushUrl:'Webhook 地址',notifyThreshold:'提醒阈值',setAuto:'自动化配置',autoRenewSwitch:'自动续期',autoRenewThreshold:'自动续期阈值',autoDisableThreshold:'自动禁用阈值',daysOverdue:'天后触发',sysLogs:'系统日志',execLogs:'执行记录',clearHistory:'清空历史',noLogs:'无记录',liveLog:'实时终端',btnExport: '导出备份',btnImport: '恢复备份',btnTest: '发送测试',btnRefresh:'刷新日志',
             lblEnable: '启用', lblToken: '令牌 (Token)', lblApiKey: 'API Key', lblChatId: '会话ID', 
             lblServer: '服务器URL', lblDevKey: '设备Key', lblFrom: '发件人', lblTo: '收件人',
             lblTopic: '主题 (Topic)',readOnly: '只读',
             lblNotifyTime: '提醒时间', btnResetToken: '重置令牌',
             lblHeaders: '请求头 (JSON)', lblBody: '消息体 (JSON)',
             tag:{alert:'触发提醒',renew:'自动续期',disable:'自动禁用',normal:'检查正常'},tagLatest:'最新',tagAuto:'自动',tagManual:'手动',msg:{confirmRenew: '确认将 [%s] 的更新日期设置为今天吗？',renewSuccess: '续期成功！日期已更新: %s -> %t',tokenReset: '令牌已重置，请更新订阅地址', copyOk: '链接已复制', exportSuccess: '备份已下载',importSuccess: '数据恢复成功，即将刷新',importFail: '导入失败，请检查文件格式',passReq:'请输入密码',saved:'保存成功',saveFail:'保存失败',cleared:'已清空',clearFail:'清空失败',loginFail:'验证失败',loadLogFail:'日志加载失败',confirmDel:'确认删除此项目?',dateError:'上次更新日期不能早于创建日期',nameReq:'服务名称不能为空',nameExist:'服务名称已存在',futureError:'上次续期不能是未来时间',serviceDisabled:'服务已停用',serviceEnabled:'服务已启用',execFinish: '执行完毕!'},tags:'标签',tagPlaceholder:'输入标签回车创建',searchPlaceholder:'搜索标题或备注...',tagsCol:'标签',tagAll:'全部',useLunar:'农历周期',lunarTip:'按农历日期计算周期',yes:'是',no:'否',timezone:'偏好时区',disabledFilter:'已停用',policyConfig:'自动化策略',policyNotify:'提醒提前期',policyAuto:'自动续期',policyRenewDay:'过期续期天数',useGlobal:'全局默认',autoRenewOnDesc:'过期自动续期',autoRenewOffDesc:'过期自动禁用',previewCalc:'根据上次续期日期和周期计算',nextDue:'下次到期',
-            fixedPrice:'账单金额',currency:'币种',defaultCurrency:'默认币种',history:'历史记录',historyTitle:'续费历史',totalCost:'总花费',totalCount:'续费次数',renewDate:'操作日期',billPeriod:'账单周期',startDate:'开始日期',endDate:'结束日期',actualPrice:'实付金额',notePlaceholder:'可选备注...',btnAddHist:'补录历史',modify:'修改',confirmDelHist:'删除此记录?',opDate:'操作日',amount:'金额',period:'周期'},
+            fixedPrice:'账单额',currency:'币种',defaultCurrency:'默认币种',history:'历史记录',historyTitle:'续费历史',totalCost:'总花费',totalCount:'续费次数',renewDate:'操作日期',billPeriod:'账单周期',startDate:'开始日期',endDate:'结束日期',actualPrice:'实付金额',notePlaceholder:'可选备注...',btnAddHist:'补录历史',modify:'修改',confirmDelHist:'删除此记录?',opDate:'操作日',amount:'金额',period:'周期',spendingDashboard:'花销看板',monthlyBreakdown:'月度明细',total:'总计',growth:'环比',currMonth:'本月'},
             en: { filter:{expired:'Overdue/Today', w7:'Within 7 Days', w30:'Within 30 Days', future:'Future(>30d)', new:'New (<30d)', stable:'Stable (1m-1y)', long:'Long Term (>1y)', m1:'Last Month', m6:'Last 6 Months', year:'This Year', earlier:'Earlier'}, secPref: 'PREFERENCES',manualRenew: 'Quick Renew',tipToggle: 'Toggle Status',tipRenew: 'Quick Renew',tipEdit: 'Edit Service',tipDelete: 'Delete Service',secNotify: 'NOTIFICATIONS',secData: 'DATA MANAGEMENT',lblIcsTitle: 'CALENDAR SUBSCRIPTION',lblIcsUrl: 'ICS URL (iOS/Google Calendar)',btnCopy: 'COPY',btnResetToken: 'RESET TOKEN',loginTitle:'SYSTEM ACCESS',passwordPlaceholder:'Authorization Key',unlockBtn:'UNLOCK TERMINAL',check:'CHECK',add:'ADD NEW',settings:'CONFIG',logs:'LOGS',logout:'LOGOUT',totalServices:'TOTAL SERVICES',expiringSoon:'EXPIRING SOON',expiredAlert:'EXPIRED / ALERT',serviceName:'SERVICE NAME',type:'TYPE',nextDue:'NEXT DUE',uptime:'UPTIME',lastRenew:'LAST RENEW',cyclePeriod:'CYCLE',actions:'ACTIONS',cycle:'CYCLE',reset:'RESET',disabled:'DISABLED',days:'DAYS',daysUnit:'DAYS',typeReset:'RESET',typeCycle:'CYCLE',lunarCal:'Lunar',lbOffline:'OFFLINE',unit:{day:'DAY',month:'MTH',year:'YR'},editService:'EDIT SERVICE',newService:'NEW SERVICE',formName:'NAME',namePlaceholder:'e.g. Netflix',formType:'MODE',createDate:'CREATE DATE',interval:'INTERVAL',note:'NOTE',status:'STATUS',active:'ACTIVE',disabledText:'DISABLED',cancel:'CANCEL',save:'SAVE DATA',saveSettings:'SAVE CONFIG',settingsTitle:'SYSTEM CONFIG',setNotify:'NOTIFICATION',pushSwitch:'MASTER PUSH',pushUrl:'WEBHOOK URL',notifyThreshold:'ALERT THRESHOLD',setAuto:'AUTOMATION',autoRenewSwitch:'AUTO RENEW',autoRenewThreshold:'RENEW AFTER',autoDisableThreshold:'DISABLE AFTER',daysOverdue:'DAYS OVERDUE',sysLogs:'SYSTEM LOGS',execLogs:'EXECUTION LOGS',clearHistory:'CLEAR HISTORY',noLogs:'NO DATA',liveLog:'LIVE TERMINAL',btnExport: 'Export Data',btnImport: 'Import Data',btnTest: 'Send Test',btnRefresh:'REFRESH',
             lblEnable: 'Enable', lblToken: 'Token', lblApiKey: 'API Key', lblChatId: 'Chat ID', 
             lblServer: 'Server URL', lblDevKey: 'Device Key', lblFrom: 'From Email', lblTo: 'To Email',
@@ -2540,7 +2829,7 @@ const HTML = `<!DOCTYPE html>
             lblNotifyTime: 'Alarm Time', btnResetToken: 'RESET TOKEN',
             lblHeaders: 'Headers (JSON)', lblBody: 'Body (JSON)',
             tag:{alert:'ALERT',renew:'RENEWED',disable:'DISABLED',normal:'NORMAL'},tagLatest:'LATEST',tagAuto:'AUTO',tagManual:'MANUAL',msg:{confirmRenew: 'Renew [%s] to today based on your timezone?',renewSuccess: 'Renewed! Date updated: %s -> %t',tokenReset: 'Token Reset. Update your calendar apps.', copyOk: 'Link Copied', exportSuccess: 'Backup Downloaded',importSuccess: 'Restore Success, Refreshing...',importFail: 'Import Failed, Check File Format',passReq:'Password Required',saved:'Data Saved',saveFail:'Save Failed',cleared:'Cleared',clearFail:'Clear Failed',loginFail:'Access Denied',loadLogFail:'Load Failed',confirmDel:'Confirm Delete?',dateError:'Last renew date cannot be earlier than create date',nameReq:'Name Required',nameExist:'Name already exists',futureError:'Renew date cannot be in the future',serviceDisabled:'Service Disabled',serviceEnabled:'Service Enabled',execFinish: 'EXECUTION FINISHED!'},tags:'TAGS',tagPlaceholder:'Press Enter to create tag',searchPlaceholder:'Search...',tagsCol:'TAGS',tagAll:'ALL',useLunar:'Lunar Cycle',lunarTip:'Calculate based on Lunar calendar',yes:'Yes',no:'No',timezone:'Timezone',disabledFilter:'DISABLED',policyConfig:'Policy Config',policyNotify:'Notify Days',policyAuto:'Auto Renew',policyRenewDay:'Renew Days',useGlobal:'Global Default',autoRenewOnDesc:'Auto Renew when overdue',autoRenewOffDesc:'Auto Disable when overdue',previewCalc:'Based on Last Renew Date & Interval',nextDue:'NEXT DUE',
-            fixedPrice:'Default Price',currency:'Currency',defaultCurrency:'Default Currency',history:'History',historyTitle:'Renewal History',totalCost:'Total Cost',totalCount:'Total Count',renewDate:'Op Date',billPeriod:'Bill Period',startDate:'Start Date',endDate:'End Date',actualPrice:'Actual Price',notePlaceholder:'Optional note...',btnAddHist:'Add Record',modify:'Edit',confirmDelHist:'Delete record?',opDate:'Op Date',amount:'Amount',period:'Period'}
+            fixedPrice:'PRICE',currency:'Currency',defaultCurrency:'Default Currency',history:'History',historyTitle:'Renewal History',totalCost:'Total Cost',totalCount:'Total Count',renewDate:'Op Date',billPeriod:'Bill Period',startDate:'Start Date',endDate:'End Date',actualPrice:'Actual Price',notePlaceholder:'Optional note...',btnAddHist:'Add Record',modify:'Edit',confirmDelHist:'Delete record?',opDate:'Op Date',amount:'Amount',period:'Period',spendingDashboard:'SPENDING DASHBOARD',monthlyBreakdown:'MONTHLY BREAKDOWN',total:'TOTAL',growth:'GROWTH',currMonth:'CURRENT'}
         };
         const LUNAR={info:[0x04bd8,0x04ae0,0x0a570,0x054d5,0x0d260,0x0d950,0x16554,0x056a0,0x09ad0,0x055d2,0x04ae0,0x0a5b6,0x0a4d0,0x0d250,0x1d255,0x0b540,0x0d6a0,0x0ada2,0x095b0,0x14977,0x04970,0x0a4b0,0x0b4b5,0x06a50,0x06d40,0x1ab54,0x02b60,0x09570,0x052f2,0x04970,0x06566,0x0d4a0,0x0ea50,0x06e95,0x05ad0,0x02b60,0x186e3,0x092e0,0x1c8d7,0x0c950,0x0d4a0,0x1d8a6,0x0b550,0x056a0,0x1a5b4,0x025d0,0x092d0,0x0d2b2,0x0a950,0x0b557,0x06ca0,0x0b550,0x15355,0x04da0,0x0a5b0,0x14573,0x052b0,0x0a9a8,0x0e950,0x06aa0,0x0aea6,0x0ab50,0x04b60,0x0aae4,0x0a570,0x05260,0x0f263,0x0d950,0x05b57,0x056a0,0x096d0,0x04dd5,0x04ad0,0x0a4d0,0x0d4d4,0x0d250,0x0d558,0x0b540,0x0b6a0,0x195a6,0x095b0,0x049b0,0x0a974,0x0a4b0,0x0b27a,0x06a50,0x06d40,0x0af46,0x0ab60,0x09570,0x04af5,0x04970,0x064b0,0x074a3,0x0ea50,0x06b58,0x055c0,0x0ab60,0x096d5,0x092e0,0x0c960,0x0d954,0x0d4a0,0x0da50,0x07552,0x056a0,0x0abb7,0x025d0,0x092d0,0x0cab5,0x0a950,0x0b4a0,0x0baa4,0x0ad50,0x055d9,0x04ba0,0x0a5b0,0x15176,0x052b0,0x0a930,0x07954,0x06aa0,0x0ad50,0x05b52,0x04b60,0x0a6e6,0x0a4e0,0x0d260,0x0ea65,0x0d530,0x05aa0,0x076a3,0x096d0,0x04bd7,0x04ad0,0x0a4d0,0x1d0b6,0x0d250,0x0d520,0x0dd45,0x0b5a0,0x056d0,0x055b2,0x049b0,0x0a577,0x0a4b0,0x0aa50,0x1b255,0x06d20,0x0ada0,0x14b63,0x09370,0x049f8,0x04970,0x064b0,0x168a6,0x0ea50,0x06b20,0x1a6c4,0x0aae0,0x0a2e0,0x0d2e3,0x0c960,0x0d557,0x0d4a0,0x0da50,0x05d55,0x056a0,0x0a6d0,0x055d4,0x052d0,0x0a9b8,0x0a950,0x0b4a0,0x0b6a6,0x0ad50,0x055a0,0x0aba4,0x0a5b0,0x052b0,0x0b273,0x06930,0x07337,0x06aa0,0x0ad50,0x14b55,0x04b60,0x0a570,0x054e4,0x0d160,0x0e968,0x0d520,0x0daa0,0x16aa6,0x056d0,0x04ae0,0x0a9d4,0x0a2d0,0x0d150,0x0f252,0x0d520],gan:'甲乙丙丁戊己庚辛壬癸'.split(''),zhi:'子丑寅卯辰巳午未申酉戌亥'.split(''),months:'正二三四五六七八九十冬腊'.split(''),days:'初一,初二,初三,初四,初五,初六,初七,初八,初九,初十,十一,十二,十三,十四,十五,十六,十七,十八,十九,二十,廿一,廿二,廿三,廿四,廿五,廿六,廿七,廿八,廿九,三十'.split(','),lYearDays(y){let s=348;for(let i=0x8000;i>0x8;i>>=1)s+=(this.info[y-1900]&i)?1:0;return s+this.leapDays(y)},leapDays(y){if(this.leapMonth(y))return(this.info[y-1900]&0x10000)?30:29;return 0},leapMonth(y){return this.info[y-1900]&0xf},monthDays(y,m){return(this.info[y-1900]&(0x10000>>m))?30:29},solar2lunar(y,m,d){if(y<1900||y>2100)return null;const base=new Date(1900,0,31),obj=new Date(y,m-1,d);let offset=Math.round((obj-base)/86400000);let ly=1900,temp=0;for(;ly<2101&&offset>0;ly++){temp=this.lYearDays(ly);offset-=temp}if(offset<0){offset+=temp;ly--}let lm=1,leap=this.leapMonth(ly),isLeap=false;for(;lm<13&&offset>0;lm++){if(leap>0&&lm===(leap+1)&&!isLeap){--lm;isLeap=true;temp=this.leapDays(ly)}else{temp=this.monthDays(ly,lm)}if(isLeap&&lm===(leap+1))isLeap=false;offset-=temp}if(offset===0&&leap>0&&lm===leap+1){if(isLeap)isLeap=false;else{isLeap=true;--lm}}if(offset<0){offset+=temp;--lm}const ld=offset+1,gIdx=(ly-4)%10,zIdx=(ly-4)%12;const yStr=this.gan[gIdx<0?gIdx+10:gIdx]+this.zhi[zIdx<0?zIdx+12:zIdx];const mStr=(isLeap?'闰':'')+this.months[lm-1]+'月';return{year:ly,month:lm,day:ld,isLeap,yearStr:yStr,monthStr:mStr,dayStr:this.days[ld-1],fullStr:yStr+'年'+mStr+this.days[ld-1]}}};
         
@@ -2591,6 +2880,9 @@ const HTML = `<!DOCTYPE html>
                 const dataVersion = ref(0); // 新增版本号状态
                 const dialogVisible = ref(false), settingsVisible = ref(false), historyVisible = ref(false), historyLoading = ref(false), historyLogs = ref([]);
                 const checking = ref(false), logs = ref([]), displayLogs = ref([]), isEdit = ref(false), lang = ref('zh'), currentTag = ref(''), searchKeyword = ref('');
+                const currentView = ref('project');
+                const hoverIndex = ref(-1);
+                const spendingMode = ref('op');
                 const locale = ref(ZhCn), tableKey = ref(0), termRef = ref(null), submitting = ref(false);
                 const form = ref({ id:'', name:'', createDate:'', lastRenewDate:'', intervalDays:30, cycleUnit:'day', type:'cycle', message:'', enabled:true, tags:[], useLunar:false, notifyDays:3, notifyTime: '08:00', autoRenew:true, autoRenewDays:3, fixedPrice:0, currency:'CNY', renewHistory:[] });
                 const settingsForm = ref({ 
@@ -2637,7 +2929,10 @@ const HTML = `<!DOCTYPE html>
                     { text: t('filter.expired'), value: 'expired' },
                     { text: t('filter.w7'), value: 'w7' },
                     { text: t('filter.w30'), value: 'w30' },
-                    { text: t('filter.future'), value: 'future' }
+                    { text: t('filter.thisMonth'), value: 'thisMonth' },
+                    { text: t('filter.nextMonth'), value: 'nextMonth' },
+                    { text: t('filter.halfYear'), value: 'halfYear' },
+                    { text: t('filter.oneYear'), value: 'oneYear' }
                 ]);
                 const typeFilters = computed(() => [
                     { text: t('typeCycle'), value: 'cycle' },
@@ -2655,8 +2950,135 @@ const HTML = `<!DOCTYPE html>
                     { text: t('filter.earlier'), value: 'earlier' }
                 ]);
                 const t = (k) => { let v=messages[lang.value]; k.split('.').forEach(p=>v=v?v[p]:k); return v||k; };
-                const expiringCount = computed(() => list.value.filter(i => i.enabled && i.daysLeft>0 && i.daysLeft<=((typeof i.notifyDays==='number')?i.notifyDays:3)).length);
-                const expiredCount = computed(() => list.value.filter(i => i.enabled && i.daysLeft<=0).length);
+                
+                const calculateTotal = (items) => {
+                    let total = 0;
+                    const defaultCur = settings.value.defaultCurrency || 'CNY';
+                    const rates = exchangeRates.value || {};
+                    items.forEach(item => {
+                        const price = parseFloat(item.fixedPrice) || 0;
+                        const cur = item.currency || defaultCur;
+                        if (cur === defaultCur) {
+                            total += price;
+                        } else if (rates[cur]) {
+                            total += price / rates[cur];
+                        } else {
+                            total += price; 
+                        }
+                    });
+                    return total.toFixed(2);
+                };
+
+                const expiringItems = computed(() => list.value.filter(i => i.enabled && i.daysLeft>0 && i.daysLeft<=((typeof i.notifyDays==='number')?i.notifyDays:3)));
+                const expiredItems = computed(() => list.value.filter(i => i.enabled && i.daysLeft<=0));
+                
+                const expiringCount = computed(() => expiringItems.value.length);
+                const expiredCount = computed(() => expiredItems.value.length);
+                
+                const expiringTotal = computed(() => calculateTotal(expiringItems.value));
+                const expiredTotal = computed(() => calculateTotal(expiredItems.value));
+                const totalAmount = computed(() => calculateTotal(list.value));
+                
+                // Spending Stats (Refactored)
+                const spendingStats = computed(() => {
+                    const defaultCur = settings.value.defaultCurrency || 'CNY';
+                    const rates = exchangeRates.value || {};
+                    const convert = (p, c) => (c !== defaultCur && rates[c]) ? p / rates[c] : p;
+                    const now = new Date();
+                    
+                    // Define Ranges
+                    // Monthly: Current-11 to Current (12 months)
+                    const monthKeys = [];
+                    for(let i=11; i>=0; i--) {
+                        const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+                        monthKeys.push(d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'));
+                    }
+                    // Annual: Current-2 to Current (3 years)
+                    const yearKeys = [now.getFullYear()-2, now.getFullYear()-1, now.getFullYear()];
+
+                    const data = {
+                        bill: { months: {}, years: {} },
+                        op:   { months: {}, years: {} }
+                    };
+                    
+                    list.value.forEach(item => {
+                         const history = item.renewHistory || [];
+                         const cur = item.currency || defaultCur;
+                         history.forEach(r => {
+                             let price = parseFloat(r.actualPrice) || parseFloat(item.fixedPrice) || 0;
+                             price = convert(price, cur);
+                             
+                             // Bill Amount (startDate)
+                             if(r.startDate) {
+                                 const p = r.startDate.split('-');
+                                 const y = parseInt(p[0]), m = parseInt(p[1]);
+                                 if(y && m) {
+                                     const mk = y + '-' + String(m).padStart(2,'0');
+                                     data.bill.months[mk] = (data.bill.months[mk]||0) + price;
+                                     data.bill.years[y] = (data.bill.years[y]||0) + price;
+                                 }
+                             }
+                             // Operation Spending (renewDate)
+                             if(r.renewDate) {
+                                 const p = r.renewDate.split('-');
+                                 const y = parseInt(p[0]), m = parseInt(p[1]);
+                                 if(y && m) {
+                                     const mk = y + '-' + String(m).padStart(2,'0');
+                                     data.op.months[mk] = (data.op.months[mk]||0) + price;
+                                     data.op.years[y] = (data.op.years[y]||0) + price;
+                                 }
+                             }
+                         });
+                    });
+
+                    const processStats = (source) => {
+                         // Trends (12 Months)
+                         const trends = monthKeys.map((key, idx) => {
+                             const val = source.months[key] || 0;
+                             // Growth vs Prev Month
+                             const [y, m] = key.split('-').map(Number);
+                             const prevD = new Date(y, m-2, 1);
+                             const prevKey = prevD.getFullYear() + '-' + String(prevD.getMonth()+1).padStart(2,'0');
+                             const prevVal = source.months[prevKey] || 0;
+                             
+                             let growth = 0;
+                             if(prevVal > 0) growth = ((val - prevVal)/prevVal)*100;
+                             else if(val > 0) growth = 100;
+
+                             return {
+                                 month: key,
+                                 total: val.toFixed(2),
+                                 val: val,
+                                 growth: growth.toFixed(1),
+                                 isCurrent: idx === 11,
+                                 prevVal: prevVal
+                             };
+                         });
+                         const maxM = Math.max(...trends.map(t=>t.val), 1);
+                         trends.forEach(t => t.pct = Math.round((t.val/maxM)*100));
+
+                         // Annual (3 Years)
+                         const annual = yearKeys.map(y => ({
+                             year: y,
+                             total: (source.years[y]||0).toFixed(0),
+                             val: source.years[y]||0
+                         }));
+                         const maxY = Math.max(...annual.map(a=>a.val), 1);
+                         annual.forEach(a => a.pct = Math.round((a.val/maxY)*100));
+
+                         return { trends, annual };
+                    };
+
+                    const billStats = processStats(data.bill);
+                    const opStats = processStats(data.op);
+
+                    return {
+                        bill: billStats,
+                        op:   opStats,
+                        hasData: Math.max(...billStats.trends.map(t=>t.val)) > 0 || Math.max(...opStats.trends.map(t=>t.val)) > 0
+                    };
+                });
+
                 const disabledCount = computed(() => list.value.filter(i => !i.enabled).length);
                 const allTags = computed(() => { const s=new Set(); list.value.forEach(i=>(i.tags||[]).forEach(t=>s.add(t))); return Array.from(s).sort(); });
                 const filteredList = computed(() => {
@@ -2667,17 +3089,35 @@ const HTML = `<!DOCTYPE html>
 
                     if (filterState.value.daysLeft && filterState.value.daysLeft.length > 0) {
                         const fv = filterState.value.daysLeft;
-                        r = r.filter(row => {
-                            const d = row.daysLeft;
-                            return fv.some(v => {
-                                if (v === 'expired') return d <= 0;
-                                if (v === 'w7') return d > 0 && d <= 7;
-                                if (v === 'w30') return d > 7 && d <= 30;
-                                if (v === 'future') return d > 30;
-                                return false;
+                            r = r.filter(row => {
+                                const d = row.daysLeft;
+                                const nd = row.nextDueDate || '';
+                                const today = new Date();
+                                const curY = today.getFullYear();
+                                const curM = today.getMonth() + 1;
+                                
+                                return fv.some(v => {
+                                    if (v === 'expired') return d <= 0;
+                                    if (v === 'w7') return d > 0 && d <= 7;
+                                    if (v === 'w30') return d > 0 && d <= 30;
+                                    if (v === 'thisMonth') {
+                                        if (!nd) return false;
+                                        const [y, m] = nd.split('-').map(Number);
+                                        return y === curY && m === curM;
+                                    }
+                                    if (v === 'nextMonth') {
+                                        if (!nd) return false;
+                                        let ty = curY, tm = curM + 1;
+                                        if (tm > 12) { tm = 1; ty++; }
+                                        const [y, m] = nd.split('-').map(Number);
+                                        return y === ty && m === tm;
+                                    }
+                                    if (v === 'halfYear') return d > 0 && d <= 183;
+                                    if (v === 'oneYear') return d > 0 && d <= 366;
+                                    return false;
+                                });
                             });
-                        });
-                    }
+                        }
 
                     if (filterState.value.type && filterState.value.type.length > 0) {
                         const fv = filterState.value.type;
@@ -2787,8 +3227,9 @@ const HTML = `<!DOCTYPE html>
                                             }).catch(()=>{});
                                         }, 1000);
                                     }).catch(()=>{});
-                                }
                             }
+                        }
+                            fetchExchangeRates(settings.value.defaultCurrency || 'CNY'); // Ensure rates are available for summary
                             unwatchList(); // Stop watching after the first check
                         }
                     });
@@ -3019,9 +3460,14 @@ const HTML = `<!DOCTYPE html>
                 };
                 const saveSettings = async () => { 
                     settingsForm.value.enabledChannels = Object.keys(channelMap).filter(k => channelMap[k]);
+                    const oldCurrency = settings.value.defaultCurrency;
                     settings.value={...settingsForm.value}; 
                     await saveData(null,settings.value); 
                     settingsVisible.value=false; 
+                    
+                    if (settings.value.defaultCurrency !== oldCurrency) {
+                        fetchExchangeRates(settings.value.defaultCurrency);
+                    }
                 };
                 const toggleChannel = (ch) => {};
 
@@ -3702,6 +4148,40 @@ const HTML = `<!DOCTYPE html>
                     }
                 });
 
+                const getSummaries = (param) => {
+                    const { columns } = param;
+                    const sums = [];
+                    const sourceData = filteredList.value; // Use filtered list for total
+                    const defaultCur = settings.value.defaultCurrency || 'CNY';
+                    const rates = exchangeRates.value || {};
+
+                    columns.forEach((column, index) => {
+                        if (index === 0) {
+                            sums[index] = t('totalCost');
+                            return;
+                        }
+                        if (column.property === 'fixedPrice') {
+                            let total = 0;
+                            sourceData.forEach(item => {
+                                const price = parseFloat(item.fixedPrice) || 0;
+                                const cur = item.currency || defaultCur;
+                                if (cur === defaultCur) {
+                                    total += price;
+                                } else if (rates[cur]) {
+                                    total += price / rates[cur];
+                                } else {
+                                    total += price; // Fallback
+                                }
+                            });
+                            sums[index] = '≈ ' + total.toFixed(2) + ' ' + defaultCur;
+                        } else {
+                            sums[index] = '';
+                        }
+                    });
+
+                    return sums;
+                };
+
                 const pagedList = computed(() => {
                     const start = (currentPage.value - 1) * pageSize.value;
                     const end = start + pageSize.value;
@@ -3741,7 +4221,7 @@ const HTML = `<!DOCTYPE html>
                     reader.readAsText(file);
                 };
                 return {
-                    tableKey, termRef, isLoggedIn, password, login, logout, loading, list, settings, lang, toggleLang, setLang, t, locale, disabledCount,
+                    tableKey, termRef, isLoggedIn, password, login, logout, loading, list, settings, lang, toggleLang, setLang, t, locale, disabledCount, currentView, hoverIndex, spendingStats, spendingMode,
                     dialogVisible, settingsVisible, historyVisible, historyLoading, historyLogs, checking, logs, displayLogs, form, settingsForm, isEdit,
                     expiringCount, expiredCount, currentTag, allTags, filteredList, searchKeyword, logVisible,formatLogTime,Upload, Download,
                     openAdd, editItem, deleteItem, saveItem, openSettings, saveSettings, runCheck, openHistoryLogs, clearLogs, toggleEnable,importRef, exportData, triggerImport, handleImportFile,
@@ -3757,7 +4237,8 @@ const HTML = `<!DOCTYPE html>
                     renewDialogVisible, renewMode, renewForm, openRenew, submitRenew,
                     historyDialogVisible, currentHistoryItem, historyPage, historyPageSize, pagedHistory, openHistory, saveHistoryInfo, addHistoryRecord, removeHistoryRecord, historyStats, exchangeRates, ratesLoading,
                     addHistoryDialogVisible, addHistoryForm, submitAddHistory,
-                    editingHistoryIndex, tempHistoryItem, startEditHistory, saveEditHistory, cancelEditHistory, submitting, currentRenewItem
+                    editingHistoryIndex, tempHistoryItem, startEditHistory, saveEditHistory, cancelEditHistory, submitting, currentRenewItem,
+                    getSummaries, expiringTotal, expiredTotal, totalAmount
                 };
             }
         }).use(ElementPlus).mount('#app');
